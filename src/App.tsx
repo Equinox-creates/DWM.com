@@ -8,8 +8,8 @@ import { LogPanel, LogEntry } from './components/LogPanel';
 import { TemplatesPanel } from './components/TemplatesPanel';
 import { AccountPanel } from './components/AccountPanel';
 import { DiscordWebhookMessage, DEFAULT_MESSAGE } from './types';
-import { Moon, Sun, Trash2, FileJson, Copy, Check, Layout, Code, Box, GitGraph, Plus, Settings, Terminal, FileText, User, Eye, EyeOff, X, Type, Webhook, Volume2, VolumeX, Menu, Layers, Send } from 'lucide-react';
-import { motion } from 'motion/react';
+import { Moon, Sun, Trash2, FileJson, Copy, Check, Layout, Code, Box, GitGraph, Plus, Settings, Terminal, FileText, User, Eye, EyeOff, X, Type, Webhook, Volume2, VolumeX, Menu, Layers, Send, ChevronDown } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/utils';
 import { Toaster } from 'sonner';
 import { toast } from '@/utils/toast';
@@ -34,6 +34,11 @@ function App() {
   const [clearRemoveWebhook, setClearRemoveWebhook] = useState(false);
   const [clearHardReset, setClearHardReset] = useState(false);
   const [showMobileWarning, setShowMobileWarning] = useState(false);
+  const [showLimitModal, setShowLimitModal] = useState(false);
+  const [showLimitDetails, setShowLimitDetails] = useState(false);
+  const [ignoreLimits, setIgnoreLimits] = useState(false);
+  const [lastValidMessage, setLastValidMessage] = useState<DiscordWebhookMessage>(DEFAULT_MESSAGE);
+  const [limitReasons, setLimitReasons] = useState<string[]>([]);
   const [showTextOptionsModal, setShowTextOptionsModal] = useState(false);
   const [stackSelectMode, setStackSelectMode] = useState(false);
   const [selectedMessages, setSelectedMessages] = useState<number[]>([]);
@@ -100,8 +105,8 @@ function App() {
           addLog(`Fetched webhook details: ${data.name}`, 'success');
         }
       } catch (error) {
-        console.error("Failed to fetch webhook details", error);
-        // Don't log error here to avoid spamming logs while typing
+        // Silently ignore fetch errors to prevent console spam and unhandled promise rejections
+        // console.error("Failed to fetch webhook details", error);
       }
     };
 
@@ -118,9 +123,69 @@ function App() {
   }, []);
 
   // Current message helper
+  const checkLimits = (msg: DiscordWebhookMessage) => {
+    let totalChars = 0;
+    let exceeds = false;
+    let reasons: string[] = [];
+
+    if (msg.content) totalChars += msg.content.length;
+
+    if (msg.embeds && msg.embeds.length > 10) {
+      exceeds = true;
+      reasons.push("Max Embeds: 10 per message");
+    }
+
+    msg.embeds?.forEach(embed => {
+      if (embed.title) {
+        totalChars += embed.title.length;
+        if (embed.title.length > 256) {
+          exceeds = true;
+          reasons.push("Title Length: 256 characters (per individual embed)");
+        }
+      }
+      if (embed.description) {
+        totalChars += embed.description.length;
+        if (embed.description.length > 4096) {
+          exceeds = true;
+          reasons.push("Description Length: 4096 characters (per individual embed)");
+        }
+      }
+      if (embed.author?.name) totalChars += embed.author.name.length;
+      if (embed.footer?.text) totalChars += embed.footer.text.length;
+      
+      if (embed.fields) {
+        if (embed.fields.length > 25) {
+          exceeds = true;
+          reasons.push("Fields per Embed: 25 fields");
+        }
+        embed.fields.forEach(field => {
+          if (field.name) totalChars += field.name.length;
+          if (field.value) totalChars += field.value.length;
+        });
+      }
+    });
+
+    if (totalChars > 6000) {
+      exceeds = true;
+      reasons.push("Total Characters: 6,000 (combined across all 10 embeds)");
+    }
+
+    return { exceeds, reasons };
+  };
+
   const message = messages[activeMessageIndex];
   
   const setMessage = (newMessage: DiscordWebhookMessage) => {
+    if (!ignoreLimits) {
+      const { exceeds, reasons } = checkLimits(newMessage);
+      if (exceeds) {
+        setLimitReasons(reasons);
+        setShowLimitModal(true);
+      } else {
+        setLastValidMessage(newMessage);
+      }
+    }
+
     const newMessages = [...messages];
     newMessages[activeMessageIndex] = newMessage;
     setMessages(newMessages);
@@ -219,15 +284,20 @@ function App() {
     addLog(`Removed message #${index + 1}`, 'warn');
   };
 
-  const tabs = [
+  const editorModes = [
     { id: 'editor', label: 'Editor', icon: Layout },
     { id: 'code', label: 'Code', icon: Code },
     { id: 'block', label: 'Block', icon: Box },
     { id: 'node', label: 'Node', icon: GitGraph },
+  ] as const;
+
+  const tabs = [
     { id: 'templates', label: 'Templates', icon: FileText },
     { id: 'logs', label: 'Logs', icon: Terminal },
     { id: 'account', label: 'Account', icon: User },
   ] as const;
+
+  const currentEditorMode = editorModes.find(m => m.id === activeTab) || editorModes[0];
 
   const [editMessageUrl, setEditMessageUrl] = useState('');
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
@@ -433,6 +503,18 @@ function App() {
         toast.success(`Message ${editingMessageId ? "updated" : "sent"} successfully!`, { id: toastId });
         addLog(`Message ${editingMessageId ? "updated" : "sent"} successfully`, 'success');
         
+        if (!editingMessageId) {
+          try {
+            const countsStr = localStorage.getItem('webhook_message_counts');
+            const counts = countsStr ? JSON.parse(countsStr) : {};
+            counts[webhookUrl] = (counts[webhookUrl] || 0) + 1;
+            localStorage.setItem('webhook_message_counts', JSON.stringify(counts));
+            window.dispatchEvent(new Event('webhook_count_updated'));
+          } catch (e) {
+            console.error('Failed to update webhook count', e);
+          }
+        }
+
         if (editingMessageId) {
             setEditingMessageId(null); // Exit edit mode
         }
@@ -498,11 +580,11 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-zinc-100 flex flex-col font-sans selection:bg-cyan-500/30">
+    <div className="h-screen w-full overflow-hidden bg-[#0a0a0a] text-zinc-100 flex flex-col font-sans selection:bg-white/30 selection:text-white">
       <Toaster position="top-center" theme="dark" />
       
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-[#121212] border-b border-[#222]">
+      <header className="sticky top-0 z-[70] bg-[#121212] border-b border-[#222]">
         <div className="w-full px-6 h-14 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-7 h-7 bg-cyan-500 rounded flex items-center justify-center shadow-[0_0_15px_rgba(6,182,212,0.3)]">
@@ -513,6 +595,24 @@ function App() {
           </div>
           
           <div className="flex items-center gap-1.5">
+            <div className="hidden sm:flex bg-[#0a0a0a] border border-[#222] rounded-md p-0.5 mr-2">
+              {editorModes.map(mode => (
+                <button
+                  key={mode.id}
+                  onClick={() => { playButtonSound(); setActiveTab(mode.id as any); }}
+                  className={cn(
+                    "px-3 py-1.5 text-xs font-medium rounded transition-all flex items-center gap-2",
+                    activeTab === mode.id 
+                      ? "bg-[#222] text-white shadow-sm" 
+                      : "text-zinc-500 hover:text-zinc-300 hover:bg-[#1a1a1a]"
+                  )}
+                >
+                  <mode.icon className="w-3.5 h-3.5" />
+                  {mode.label}
+                </button>
+              ))}
+            </div>
+            
             <button
               onClick={() => {
                 const newMuted = !isMutedState;
@@ -549,6 +649,7 @@ function App() {
               >
                 <Settings className="w-3.5 h-3.5" /> <span>Settings</span>
               </button>
+
               <div className="w-px h-4 bg-[#333] mx-1" />
               <button
                 onClick={() => { playButtonSound(); setShowTextOptionsModal(true); }}
@@ -583,11 +684,40 @@ function App() {
       <main className="flex-1 overflow-hidden flex pb-16 sm:pb-0">
         
         {/* Left Sidebar Menu (Desktop) */}
-        <div className="hidden sm:flex w-16 bg-[#121212] border-r border-[#222] flex-col items-center py-4 gap-2 z-40">
+        <div className="hidden sm:flex w-16 bg-[#121212] border-r border-[#222] flex-col items-center py-4 gap-2 z-40 overflow-y-auto overflow-x-hidden custom-scrollbar">
+           <div className="w-full flex flex-col items-center gap-2 mb-4 pb-4 border-b border-[#222]">
+             {editorModes.map(mode => (
+               <button
+                 key={mode.id}
+                 onClick={() => setActiveTab(mode.id as any)}
+                 className={cn(
+                   "w-10 h-10 transition-all duration-200 flex items-center justify-center group relative rounded-lg",
+                   activeTab === mode.id 
+                     ? "text-cyan-400 bg-cyan-400/10" 
+                     : "text-zinc-500 hover:text-zinc-300 hover:bg-[#222]"
+                 )}
+                 title={mode.label}
+               >
+                 {activeTab === mode.id && (
+                   <motion.div 
+                     layoutId="activeTabIndicator"
+                     className="absolute left-0 w-1 h-6 bg-cyan-400 rounded-r-full shadow-[0_0_8px_rgba(6,182,212,0.8)]"
+                     initial={false}
+                     transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                   />
+                 )}
+                 <mode.icon className="w-5 h-5 relative z-10" />
+                 <span className="text-[10px] font-medium opacity-0 group-hover:opacity-100 transition-opacity absolute left-12 bg-[#222] text-white px-2 py-1 rounded shadow-lg whitespace-nowrap z-50 pointer-events-none border border-[#333]">
+                   {mode.label}
+                 </span>
+               </button>
+             ))}
+           </div>
+           
            {tabs.map(tab => (
              <button
                key={tab.id}
-               onClick={() => setActiveTab(tab.id)}
+               onClick={() => setActiveTab(tab.id as any)}
                className={cn(
                  "w-10 h-10 transition-all duration-200 flex items-center justify-center group relative rounded-lg",
                  activeTab === tab.id 
@@ -751,64 +881,86 @@ function App() {
 
       {/* Mobile Menu Drawer */}
       {showMobileMenu && (
-        <div className="sm:hidden fixed inset-0 z-40 bg-black/50 backdrop-blur-sm" onClick={() => setShowMobileMenu(false)}>
+        <div className="sm:hidden fixed inset-0 z-[80] bg-black/50 backdrop-blur-sm" onClick={() => setShowMobileMenu(false)}>
           <motion.div
             initial={{ y: "100%" }}
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
             transition={{ type: "spring", damping: 25, stiffness: 200 }}
-            className="absolute bottom-16 left-0 right-0 bg-white dark:bg-[#1e1f22] rounded-t-2xl p-4 shadow-xl border-t border-zinc-200 dark:border-[#111214]"
+            className="absolute bottom-16 left-0 right-0 bg-white dark:bg-[#1e1f22] rounded-t-2xl p-4 shadow-xl border-t border-zinc-200 dark:border-[#111214] max-h-[80vh] overflow-y-auto custom-scrollbar"
             onClick={e => e.stopPropagation()}
           >
-            <div className="grid grid-cols-4 gap-4">
-              {tabs.filter(t => t.id !== 'editor' && t.id !== 'logs').map(tab => (
+            <div className="mb-6">
+              <h4 className="text-xs font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider mb-3 px-1">Editors</h4>
+              <div className="grid grid-cols-4 gap-4">
+                {editorModes.map(mode => (
+                  <button
+                    key={mode.id}
+                    onClick={() => { setActiveTab(mode.id as any); setShowMobileMenu(false); }}
+                    className={cn(
+                      "flex flex-col items-center justify-center p-3 rounded-xl transition-colors",
+                      activeTab === mode.id ? "bg-cyan-50 dark:bg-cyan-900/20 text-cyan-500" : "bg-zinc-50 dark:bg-zinc-900 text-zinc-500"
+                    )}
+                  >
+                    <mode.icon className="w-6 h-6 mb-1" />
+                    <span className="text-[10px] font-medium">{mode.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <h4 className="text-xs font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider mb-3 px-1">Tools & Settings</h4>
+              <div className="grid grid-cols-4 gap-4">
+                {tabs.filter(t => t.id !== 'logs').map(tab => (
+                  <button
+                    key={tab.id}
+                    onClick={() => { setActiveTab(tab.id); setShowMobileMenu(false); }}
+                    className={cn(
+                      "flex flex-col items-center justify-center p-3 rounded-xl transition-colors",
+                      activeTab === tab.id ? "bg-cyan-50 dark:bg-cyan-900/20 text-cyan-500" : "bg-zinc-50 dark:bg-zinc-900 text-zinc-500"
+                    )}
+                  >
+                    <tab.icon className="w-6 h-6 mb-1" />
+                    <span className="text-[10px] font-medium">{tab.label}</span>
+                  </button>
+                ))}
                 <button
-                  key={tab.id}
-                  onClick={() => { setActiveTab(tab.id); setShowMobileMenu(false); }}
-                  className={cn(
-                    "flex flex-col items-center justify-center p-3 rounded-xl transition-colors",
-                    activeTab === tab.id ? "bg-cyan-50 dark:bg-cyan-900/20 text-cyan-500" : "bg-zinc-50 dark:bg-zinc-900 text-zinc-500"
-                  )}
+                  onClick={() => { playButtonSound(); setShowMessageManager(true); setShowMobileMenu(false); }}
+                  className="flex flex-col items-center justify-center p-3 rounded-xl bg-zinc-50 dark:bg-zinc-900 text-zinc-500 transition-colors"
                 >
-                  <tab.icon className="w-6 h-6 mb-1" />
-                  <span className="text-[10px] font-medium">{tab.label}</span>
+                  <Layers className="w-6 h-6 mb-1" />
+                  <span className="text-[10px] font-medium">Manager</span>
                 </button>
-              ))}
-              <button
-                onClick={() => { playButtonSound(); setShowMessageManager(true); setShowMobileMenu(false); }}
-                className="flex flex-col items-center justify-center p-3 rounded-xl bg-zinc-50 dark:bg-zinc-900 text-zinc-500 transition-colors"
-              >
-                <Layers className="w-6 h-6 mb-1" />
-                <span className="text-[10px] font-medium">Manager</span>
-              </button>
-              <button
-                onClick={() => { playButtonSound(); setShowWebhookManager(true); setShowMobileMenu(false); }}
-                className="flex flex-col items-center justify-center p-3 rounded-xl bg-zinc-50 dark:bg-zinc-900 text-zinc-500 transition-colors"
-              >
-                <Settings className="w-6 h-6 mb-1" />
-                <span className="text-[10px] font-medium">Webhooks</span>
-              </button>
-              <button
-                onClick={() => { playButtonSound(); setShowTextOptionsModal(true); setShowMobileMenu(false); }}
-                className="flex flex-col items-center justify-center p-3 rounded-xl bg-zinc-50 dark:bg-zinc-900 text-zinc-500 transition-colors"
-              >
-                <Type className="w-6 h-6 mb-1" />
-                <span className="text-[10px] font-medium">Text Opts</span>
-              </button>
-              <button
-                onClick={() => { playButtonSound(); setShowJson(true); setShowMobileMenu(false); }}
-                className="flex flex-col items-center justify-center p-3 rounded-xl bg-zinc-50 dark:bg-zinc-900 text-zinc-500 transition-colors"
-              >
-                <FileJson className="w-6 h-6 mb-1" />
-                <span className="text-[10px] font-medium">JSON</span>
-              </button>
-              <button
-                onClick={() => { playButtonSound(); handleClear(); setShowMobileMenu(false); }}
-                className="flex flex-col items-center justify-center p-3 rounded-xl bg-zinc-50 dark:bg-zinc-900 text-red-500 transition-colors"
-              >
-                <Trash2 className="w-6 h-6 mb-1" />
-                <span className="text-[10px] font-medium">Clear All</span>
-              </button>
+                <button
+                  onClick={() => { playButtonSound(); setShowWebhookManager(true); setShowMobileMenu(false); }}
+                  className="flex flex-col items-center justify-center p-3 rounded-xl bg-zinc-50 dark:bg-zinc-900 text-zinc-500 transition-colors"
+                >
+                  <Settings className="w-6 h-6 mb-1" />
+                  <span className="text-[10px] font-medium">Webhooks</span>
+                </button>
+                <button
+                  onClick={() => { playButtonSound(); setShowTextOptionsModal(true); setShowMobileMenu(false); }}
+                  className="flex flex-col items-center justify-center p-3 rounded-xl bg-zinc-50 dark:bg-zinc-900 text-zinc-500 transition-colors"
+                >
+                  <Type className="w-6 h-6 mb-1" />
+                  <span className="text-[10px] font-medium">Text Opts</span>
+                </button>
+                <button
+                  onClick={() => { playButtonSound(); setShowJson(true); setShowMobileMenu(false); }}
+                  className="flex flex-col items-center justify-center p-3 rounded-xl bg-zinc-50 dark:bg-zinc-900 text-zinc-500 transition-colors"
+                >
+                  <FileJson className="w-6 h-6 mb-1" />
+                  <span className="text-[10px] font-medium">JSON</span>
+                </button>
+                <button
+                  onClick={() => { playButtonSound(); handleClear(); setShowMobileMenu(false); }}
+                  className="flex flex-col items-center justify-center p-3 rounded-xl bg-zinc-50 dark:bg-zinc-900 text-red-500 transition-colors"
+                >
+                  <Trash2 className="w-6 h-6 mb-1" />
+                  <span className="text-[10px] font-medium">Clear All</span>
+                </button>
+              </div>
             </div>
           </motion.div>
         </div>
@@ -1448,6 +1600,131 @@ function App() {
           </motion.div>
         </div>
       )}
+
+      {/* Limit Exceeded Modal */}
+      <AnimatePresence>
+        {showLimitModal && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-[#121212] rounded-2xl shadow-2xl w-full max-w-lg flex flex-col overflow-hidden border border-[#333]"
+            >
+              <div className="p-6 space-y-4">
+                <h1 className="font-bold text-2xl text-red-500">You have reached the limitation</h1>
+                <p className="text-sm text-zinc-300">
+                  Sorry, we can not do anything about that, but discord webhooks have limitations, discord will not support to send this message, the limitations are given below -
+                </p>
+                
+                <div className="border border-[#333] rounded-xl overflow-hidden">
+                  <button 
+                    onClick={() => setShowLimitDetails(!showLimitDetails)}
+                    className="w-full flex items-center justify-between p-3 bg-[#1a1a1a] hover:bg-[#222] transition-colors"
+                  >
+                    <span className="font-medium text-sm text-zinc-200">View Limitations</span>
+                    <motion.div animate={{ rotate: showLimitDetails ? 180 : 0 }}>
+                      <ChevronDown className="w-4 h-4 text-zinc-400" />
+                    </motion.div>
+                  </button>
+                  
+                  <AnimatePresence>
+                    {showLimitDetails && (
+                      <motion.div 
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        className="bg-[#0a0a0a] border-t border-[#333] overflow-hidden"
+                      >
+                        <div className="p-4">
+                          <table className="w-full text-sm text-left">
+                            <thead className="text-xs text-zinc-500 uppercase border-b border-[#333]">
+                              <tr>
+                                <th className="pb-2 font-medium">Feature</th>
+                                <th className="pb-2 font-medium">Limit</th>
+                              </tr>
+                            </thead>
+                            <tbody className="text-zinc-300">
+                              <tr className="border-b border-[#222]">
+                                <td className="py-2">Max Embeds</td>
+                                <td className="py-2">10 per message</td>
+                              </tr>
+                              <tr className="border-b border-[#222]">
+                                <td className="py-2">Total Characters</td>
+                                <td className="py-2">6,000 (combined across all 10 embeds)</td>
+                              </tr>
+                              <tr className="border-b border-[#222]">
+                                <td className="py-2">Fields per Embed</td>
+                                <td className="py-2">25 fields</td>
+                              </tr>
+                              <tr className="border-b border-[#222]">
+                                <td className="py-2">Description Length</td>
+                                <td className="py-2">4,096 characters (per individual embed)</td>
+                              </tr>
+                              <tr>
+                                <td className="py-2">Title Length</td>
+                                <td className="py-2">256 characters</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+
+                {limitReasons.length > 0 && (
+                  <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3">
+                    <p className="text-xs font-bold text-red-400 mb-1">Current Exceeded Limits:</p>
+                    <ul className="list-disc list-inside text-xs text-red-300 space-y-1">
+                      {limitReasons.map((reason, idx) => (
+                        <li key={idx}>{reason}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+              
+              <div className="p-4 bg-[#0a0a0a] border-t border-[#333] flex flex-col sm:flex-row gap-2">
+                <button 
+                  onClick={() => { 
+                    playButtonSound(); 
+                    setIgnoreLimits(true);
+                    setShowLimitModal(false); 
+                  }}
+                  className="flex-1 py-2.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 border border-amber-500/20 rounded-xl font-bold transition-colors text-sm"
+                >
+                  Continue anyway
+                </button>
+                <button 
+                  onClick={() => { 
+                    playButtonSound(); 
+                    
+                    // Revert to last valid message
+                    const newMessages = [...messages];
+                    newMessages[activeMessageIndex] = lastValidMessage;
+                    setMessages(newMessages);
+                    
+                    setShowLimitModal(false); 
+                  }}
+                  className="flex-1 py-2.5 bg-red-500 hover:bg-red-400 text-white rounded-xl font-bold transition-colors shadow-[0_0_15px_rgba(239,68,68,0.3)] text-sm"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={() => { 
+                    playButtonSound(); 
+                    setShowLimitModal(false); 
+                  }}
+                  className="flex-1 py-2.5 bg-[#222] hover:bg-[#333] text-zinc-300 hover:text-white border border-[#333] rounded-xl font-bold transition-colors text-sm"
+                >
+                  Close
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       <style>{`
         .custom-scrollbar::-webkit-scrollbar {

@@ -71,27 +71,27 @@ export interface DiscordEmbedField {
 }
 
 export const DEFAULT_MESSAGE: DiscordWebhookMessage = {
-  content: "Hello ! I'm Captain Hook.",
+  content: "Hello ! I'm Captain Hook.!",
   username: "Captain Hook",
   embeds: [
     {
-      title: "Welcome to the server!",
-      description: "This is A Sample Embed, Which is made with Discord Webhook manager .",
-      color: 5814783, // #00f7ff
+      title: "Welcome, You can Now Edit Send And Also Almost everything!",
+      description: "This is a sample embed , Discord webhooks are have some limitations, and one of thame is the Embeds, A Webhook Can Send Max 10 Embeds In par Massege, Silect Continue To Break the limit !",
+      color: 5814783, // #58b9ff
       fields: [
         {
-          name: "Getting Started",
-          value: "Check out the channels on the left.",
-          inline: true,
+          name: "Let's Get Started-",
+          value: "Check out the channels on the left. Use the Menue at the header or in the settings To change the Editor Type for More Better Editing",
+          inline: false,
         },
         {
-          name: "Rules",
-          value: "Be nice to everyone.",
-          inline: true,
+          name: "Max limits of Discord Webhooks-",
+          value: "Sorry, But We Can not Do Anything Aboute it, it's all about webhooks of discord, Thay have added Some Limits, But Nothing To Worry, You Can Breack The limits By our Systeme- The Critical LimitsFeatureLimitMax Embeds10 per messageTotal Characters6,000 (combined across all 10 embeds)Fields per Embed25 fieldsDescription Length4,096 characters (per individual embed)Title Length256 characters.",
+          inline: false,
         },
       ],
       footer: {
-        text: "Ex: Footer Content",
+        text: "A Short Guide From us",
       },
     },
   ],

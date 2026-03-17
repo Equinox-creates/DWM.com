@@ -538,10 +538,10 @@ export const WebhookEditor: React.FC<EditorProps> = ({ message, onChange, webhoo
             >
               <div className="p-6">
                 <h3 className="text-xl font-bold text-white mb-2">
-                  Recognized
+                  Unrecognized URL
                 </h3>
                 <p className="text-zinc-400 mb-6">
-                  URL
+                  Your given Webhook URL is can not found in the DWM Tools Database , Webhook URL Struckture, So please cheak The url again.
                 </p>
                 <div className="flex justify-end gap-3">
                   <button

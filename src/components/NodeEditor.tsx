@@ -5,6 +5,7 @@ import { DiscordWebhookMessage, DiscordEmbed, DiscordEmbedField } from '@/types'
 import { intToHex, hexToInt } from '@/utils';
 import { Trash2, Scissors, Undo, Redo, Plus, ChevronDown } from 'lucide-react';
 import { playButtonSound, playDeleteSound } from '@/utils/sounds';
+import { CustomColorPicker } from './ui/CustomInputs';
 
 // --- Custom Nodes ---
 
@@ -70,11 +71,10 @@ const EmbedNode = ({ data, id }: NodeProps) => {
       <div className="p-3 space-y-2.5">
         <div className="flex items-center justify-between mb-3 bg-[#1d1d1d] p-1.5 rounded border border-[#3d3d3d] shadow-inner">
           <div className="text-[11px] text-[#cccccc] ml-1">Color</div>
-          <input 
-            type="color" 
-            value={intToHex(data.color)} 
-            onChange={(e) => data.onChange(id, hexToInt(e.target.value) || 0)}
-            className="w-6 h-6 rounded cursor-pointer border-0 p-0 bg-transparent nodrag"
+          <CustomColorPicker 
+            color={intToHex(data.color)} 
+            onChange={(color) => data.onChange(id, hexToInt(color) || 0)}
+            hideHexInput
           />
         </div>
         

@@ -19,13 +19,9 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ message, onChange, onUnd
   const [error, setError] = useState<string | null>(null);
   const isTyping = useRef(false);
 
-  const messageToPython = (msg: DiscordWebhookMessage) => {
+  const messageToJson = (msg: DiscordWebhookMessage) => {
     try {
-      const json = JSON.stringify(msg, null, 4);
-      return json
-        .replace(/true/g, 'True')
-        .replace(/false/g, 'False')
-        .replace(/null/g, 'None');
+      return JSON.stringify(msg, null, 2);
     } catch {
       return '';
     }
@@ -34,7 +30,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ message, onChange, onUnd
   useEffect(() => {
     if (!isTyping.current) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setCode(messageToPython(message));
+      setCode(messageToJson(message));
     }
   }, [message]);
 
@@ -43,14 +39,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ message, onChange, onUnd
     setCode(newCode);
     isTyping.current = true;
     try {
-      const jsonString = newCode
-        .replace(/True/g, 'true')
-        .replace(/False/g, 'false')
-        .replace(/None/g, 'null')
-        .replace(/'/g, '"')
-        .replace(/,(\s*[}\]])/g, '$1');
-
-      const parsed = JSON.parse(jsonString);
+      const parsed = JSON.parse(newCode);
       setError(null);
       onChange(parsed);
     } catch (err: unknown) {
@@ -80,7 +69,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ message, onChange, onUnd
           <div className="w-3 h-3 rounded-full bg-[#ff5f56]" />
           <div className="w-3 h-3 rounded-full bg-[#ffbd2e]" />
           <div className="w-3 h-3 rounded-full bg-[#27c93f]" />
-          <span className="ml-2 text-zinc-600 dark:text-zinc-400 text-xs font-mono">webhook.py</span>
+          <span className="ml-2 text-zinc-600 dark:text-zinc-400 text-xs font-mono">message.json</span>
         </div>
         <div className="flex items-center gap-2">
            {onUndo && (
@@ -116,7 +105,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ message, onChange, onUnd
       <div className="flex-1 overflow-hidden">
         <Editor
           height="100%"
-          defaultLanguage="python"
+          defaultLanguage="json"
           theme="vs-dark"
           value={code}
           onChange={handleCodeChange}
